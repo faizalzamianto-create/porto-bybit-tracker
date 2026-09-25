@@ -641,13 +641,13 @@ function renderUpdateTabBody(){
     body.innerHTML = `
       <div class="field">
         <label>Tempel data dari Bybit</label>
-        <textarea id="pasteBox" placeholder="tanggal: 2026-09-25
-total: 69883130.79
-tersedia: 63817239.17
-dipakai: 6065891.62
-coin: ZK | 200000.01779 | 42894919.45 | 8.61
-coin: USDT | 1097.3396 | 19640444.61 | 0
-futures: CHILLGUYUSDT | long | 20 | 500000 | 0.012605 | 0.013428 | 411.41 | 121.36 | 9.68 | "></textarea>
+        <textarea id="pasteBox" placeholder="tanggal: 2026-01-01
+total: 10000000
+tersedia: 8000000
+dipakai: 2000000
+coin: BTC | 0.05 | 8000000 | 1.23
+coin: USDT | 500 | 7900000 | 0
+futures: BTCUSDT | long | 10 | 0.1 | 60000 | 61000 | 100 | 12.5 | 5 | "></textarea>
         <div class="hint">Format: tanggal / total / tersedia / dipakai, lalu baris "coin: SIMBOL | qty | nilaiIDR | perubahan%" dan "futures: SIMBOL | long/short | leverage | qty | entry | mark | pnlUSDT | pnl% | mm% | likuidasi(opsional)"</div>
       </div>
       <button class="btn btn-secondary btn-block" onclick="parsePaste()">Urai ke Form</button>
