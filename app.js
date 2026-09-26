@@ -813,7 +813,7 @@ function fileToImagePart(file){
 
 async function callGeminiVision(apiKey, images){
   const parts = [{text: SHOT_PROMPT}, ...images.map(img=>({inline_data:{mime_type:img.mimeType, data:img.data}}))];
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+encodeURIComponent(apiKey);
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:generateContent?key='+encodeURIComponent(apiKey);
   const res = await fetch(url, {
     method:'POST',
     headers:{'content-type':'application/json'},
