@@ -626,7 +626,16 @@ function openUpdateModal(editId){
     updateState = { editId, coins: (s.coins||[]).map(c=>({...c})), futures: (s.futures||[]).map(f=>({...f})),
       date: s.date, note: s.note||'', totalAssetIDR: s.totalAssetIDR, availableIDR: s.availableIDR, inUseIDR: s.inUseIDR };
   } else {
-    updateState = { editId:null, coins:[], futures:[], date: todayStr(), note:'', totalAssetIDR:'', availableIDR:'', inUseIDR:'' };
+    const last = latestSnapshot();
+    updateState = {
+      editId:null,
+      coins: last ? (last.coins||[]).map(c=>({...c})) : [],
+      futures: last ? (last.futures||[]).map(f=>({...f})) : [],
+      date: todayStr(), note:'',
+      totalAssetIDR: last ? last.totalAssetIDR : '',
+      availableIDR: last ? last.availableIDR : '',
+      inUseIDR: last ? last.inUseIDR : ''
+    };
   }
   renderUpdateModal();
   document.getElementById('modalBackdrop').classList.add('active');
@@ -673,16 +682,19 @@ futures: BTCUSDT | long | 10 | 0.1 | 60000 | 61000 | 100 | 12.5 | 5 | "></textar
     `;
     return;
   }
+  const hideAssetFields = currentScreen === 'futures';
   body.innerHTML = `
     <div class="field-row">
       <div class="field"><label>Tanggal</label><input type="date" id="u-date" value="${st.date||todayStr()}"></div>
       <div class="field"><label>Catatan</label><input type="text" id="u-note" value="${escapeAttr(st.note||'')}" placeholder="opsional"></div>
     </div>
+    ${hideAssetFields ? `<div class="hint" style="margin-bottom:12px;">Total Aset/Tersedia/Digunakan mengikuti update Aset terakhir. Update dulu di menu Aset kalau nilainya berubah.</div>` : `
     <div class="field"><label>Total Aset (IDR)</label><input type="number" id="u-total" value="${st.totalAssetIDR!=null?st.totalAssetIDR:''}"></div>
     <div class="field-row">
       <div class="field"><label>Tersedia (IDR)</label><input type="number" id="u-avail" value="${st.availableIDR!=null?st.availableIDR:''}"></div>
       <div class="field"><label>Digunakan (IDR)</label><input type="number" id="u-inuse" value="${st.inUseIDR!=null?st.inUseIDR:''}"></div>
     </div>
+    `}
 
     <div class="section-title" style="margin-top:16px;">Holding Coin <span class="link" onclick="addCoinRow()">+ Tambah</span></div>
     <div id="coinRows">${st.coins.map((c,i)=>renderCoinFormRow(c,i)).join('') || '<div class="small muted">Belum ada coin ditambahkan</div>'}</div>
@@ -912,9 +924,12 @@ async function handleScreenshotUpload(ev){
 function saveUpdate(){
   const date = (document.getElementById('u-date') && document.getElementById('u-date').value) || updateState.date || todayStr();
   const note = (document.getElementById('u-note') && document.getElementById('u-note').value.trim()) || '';
-  const totalAssetIDR = n(document.getElementById('u-total').value);
-  const availableIDR = n(document.getElementById('u-avail').value);
-  const inUseIDR = n(document.getElementById('u-inuse').value);
+  const totalEl = document.getElementById('u-total');
+  const availEl = document.getElementById('u-avail');
+  const inuseEl = document.getElementById('u-inuse');
+  const totalAssetIDR = totalEl ? n(totalEl.value) : n(updateState.totalAssetIDR);
+  const availableIDR = availEl ? n(availEl.value) : n(updateState.availableIDR);
+  const inUseIDR = inuseEl ? n(inuseEl.value) : n(updateState.inUseIDR);
   const coins = updateState.coins.filter(c=>c.coin).map(c=>({coin:c.coin, qty:n(c.qty), valueIDR:n(c.valueIDR), changePct:c.changePct===''?'':n(c.changePct)}));
   const futures = updateState.futures.filter(f=>f.symbol).map(f=>({
     symbol:f.symbol, side:f.side==='short'?'short':'long', leverage:n(f.leverage), qty:n(f.qty),
