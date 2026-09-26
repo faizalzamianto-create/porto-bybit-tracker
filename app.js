@@ -811,25 +811,41 @@ function fileToImagePart(file){
   });
 }
 
+function extractInteractionText(payload){
+  if(!payload) return '';
+  if(typeof payload.output_text === 'string') return payload.output_text;
+  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+  const texts = [];
+  steps.forEach(s=>{
+    const content = Array.isArray(s.content) ? s.content : [];
+    content.forEach(c=>{ if(c && typeof c.text === 'string') texts.push(c.text); });
+  });
+  return texts.join('');
+}
 async function callGeminiVision(apiKey, images){
-  const parts = [{text: SHOT_PROMPT}, ...images.map(img=>({inline_data:{mime_type:img.mimeType, data:img.data}}))];
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.0-flash:generateContent?key='+encodeURIComponent(apiKey);
+  const input = [{type:'text', text: SHOT_PROMPT}, ...images.map(img=>({type:'image', data:img.data, mime_type:img.mimeType}))];
+  const url = 'https://generativelanguage.googleapis.com/v1beta/interactions';
   const res = await fetch(url, {
     method:'POST',
-    headers:{'content-type':'application/json'},
-    body: JSON.stringify({ contents:[{ parts }], generationConfig:{ responseMimeType:'application/json' } })
+    headers:{'content-type':'application/json', 'x-goog-api-key': apiKey},
+    body: JSON.stringify({
+      model:'gemini-3.8-flash',
+      input,
+      response_format:{ type:'text', mime_type:'application/json' }
+    })
   });
-  if(!res.ok){
-    let msg = 'HTTP '+res.status;
-    try{ const j = await res.json(); msg = (j.error && j.error.message) || msg; }catch(e){}
+  let raw = null;
+  try{ raw = await res.json(); }catch(e){}
+  const payload = Array.isArray(raw) ? raw[0] : raw;
+  if(!res.ok || (payload && payload.error)){
+    const msg = (payload && payload.error && payload.error.message) || ('HTTP '+res.status);
     throw new Error(msg);
   }
-  const data = await res.json();
-  const cand = data.candidates && data.candidates[0];
-  const text = cand && cand.content && cand.content.parts ? cand.content.parts.map(p=>p.text||'').join('') : '';
+  const text = extractInteractionText(payload).trim();
   if(!text) throw new Error('Respon AI kosong (kemungkinan gambar diblok filter keamanan)');
+  const cleaned = text.replace(/^```json\s*/i,'').replace(/^```\s*/,'').replace(/```\s*$/,'').trim();
   let parsed;
-  try{ parsed = JSON.parse(text); }catch(e){ throw new Error('Respon AI tidak berbentuk JSON valid'); }
+  try{ parsed = JSON.parse(cleaned); }catch(e){ throw new Error('Respon AI tidak berbentuk JSON valid'); }
   return parsed;
 }
 
