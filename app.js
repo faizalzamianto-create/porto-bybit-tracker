@@ -1,6 +1,7 @@
 /* ============ Porto Bybit — Pelacak Portofolio ============
    Local-first single-page app. All data stored in localStorage on this device.
-   No external network calls, no API keys. Update manual lewat form atau tempel cepat. */
+   Update manual lewat form, tempel teks cepat, atau (opsional) upload screenshot
+   yang dibaca otomatis lewat Gemini API (free tier) — hanya dipanggil kalau user isi API key sendiri. */
 
 const STORAGE_KEY = 'porto_bybit_tracker_data_v1';
 const MM_WARN = 7;   // >= ini warna kuning
@@ -16,7 +17,7 @@ function defaultData(){
       withdrawals:[]  // {id,date,amount,note}
     },
     snapshots:[], // {id,date,note,totalAssetIDR,availableIDR,inUseIDR,coins:[{coin,qty,valueIDR,changePct}],futures:[{symbol,side,leverage,qty,entry,mark,pnlUsdt,pnlPct,mm,liq}]}
-    settings:{ mmWarn: MM_WARN, mmDanger: MM_DANGER, usdtIdr: null },
+    settings:{ mmWarn: MM_WARN, mmDanger: MM_DANGER, usdtIdr: null, geminiApiKey: '' },
     meta:{ createdAt:null, updatedAt:null, homeScreenReminderDismissedAt:null, bannerDismissedAt:null }
   };
 }
@@ -524,7 +525,7 @@ function renderMore(root){
       <div class="more-item" onclick="openSub('settingsScreen')"><div class="ic">⚙️</div><div class="txt"><div class="t">Pengaturan Risiko</div><div class="d">Ambang batas MM%</div></div><div class="muted">›</div></div>
       <div class="more-item" onclick="openSub('backup')"><div class="ic">🗂️</div><div class="txt"><div class="t">Backup &amp; Restore</div><div class="d">Ekspor / impor data JSON</div></div><div class="muted">›</div></div>
     </div>
-    <div class="disclaimer">Semua data disimpan lokal di penyimpanan browser HP ini. Tidak ada koneksi ke akun Bybit atau server manapun — semua update dicatat manual.</div>
+    <div class="disclaimer">Semua data disimpan lokal di penyimpanan browser HP ini. Tidak ada koneksi ke akun Bybit — semua update dicatat manual atau dibaca dari screenshot. Fitur baca screenshot otomatis (opsional) mengirim gambar ke Gemini API milik Google saat dipakai; kalau kunci API tidak diisi, fitur ini tidak aktif dan semua tetap 100% lokal.</div>
   `;
 }
 function renderSettingsScreen(root){
@@ -536,11 +537,22 @@ function renderSettingsScreen(root){
       <div class="field"><label>Ambang Bahaya MM (%)</label><input type="number" id="set-danger" value="${DATA.settings.mmDanger}"></div>
       <button class="btn btn-primary btn-block" onclick="saveSettings()">Simpan Pengaturan</button>
     </div>
+    <div class="card">
+      <div class="card-title">Baca Screenshot Otomatis (AI)</div>
+      <div class="field"><label>Kunci API Gemini (gratis)</label><input type="password" id="set-geminikey" value="${escapeAttr(DATA.settings.geminiApiKey||'')}" placeholder="AIza..."></div>
+      <div class="field"><label>Kurs USDT → IDR</label><input type="number" id="set-usdtidr" value="${DATA.settings.usdtIdr!=null?DATA.settings.usdtIdr:''}" placeholder="cth. 15800"></div>
+      <div class="hint">Bikin kunci API gratis di <b>aistudio.google.com/apikey</b> (login akun Google, tanpa kartu kredit). Kunci disimpan hanya di HP ini. Dipakai saat kamu upload screenshot Bybit di tab "Tempel Cepat" — gambar dikirim ke Gemini untuk dibaca, hasilnya balik ke HP kamu. Kurs dipakai kalau screenshot menampilkan nilai dalam USDT, biar otomatis dikonversi ke IDR.</div>
+      <button class="btn btn-primary btn-block" style="margin-top:10px;" onclick="saveSettings()">Simpan Pengaturan</button>
+    </div>
   `;
 }
 function saveSettings(){
   DATA.settings.mmWarn = n(document.getElementById('set-warn').value) || MM_WARN;
   DATA.settings.mmDanger = n(document.getElementById('set-danger').value) || MM_DANGER;
+  const keyEl = document.getElementById('set-geminikey');
+  const rateEl = document.getElementById('set-usdtidr');
+  if(keyEl) DATA.settings.geminiApiKey = keyEl.value.trim();
+  if(rateEl){ const rate = n(rateEl.value); DATA.settings.usdtIdr = rate>0 ? rate : null; }
   saveData();
   alert('Pengaturan disimpan');
   renderScreen(currentScreen);
@@ -639,6 +651,13 @@ function renderUpdateTabBody(){
   const st = updateState;
   if(updateTab==='paste'){
     body.innerHTML = `
+      <div class="field">
+        <label>📷 Upload Screenshot Bybit</label>
+        <input type="file" id="shotInput" accept="image/*" multiple onchange="handleScreenshotUpload(event)">
+        <div class="hint">Upload 1-2 screenshot (halaman Aset/Wallet dan/atau Posisi Futures). Dibaca otomatis lewat AI (Gemini) dan langsung mengisi form — cek dulu di tab Form sebelum simpan. Perlu kunci API gratis di Lainnya → Pengaturan Risiko.</div>
+        <div id="shotStatus" class="small" style="margin-top:6px;"></div>
+      </div>
+      <div class="small muted" style="text-align:center;margin:14px 0;">— atau tempel teks manual —</div>
       <div class="field">
         <label>Tempel data dari Bybit</label>
         <textarea id="pasteBox" placeholder="tanggal: 2026-01-01
@@ -759,6 +778,119 @@ function parsePaste(){
   });
   updateTab = 'form';
   renderUpdateModal();
+}
+
+/* ---------------- Baca screenshot otomatis (Gemini API) ---------------- */
+const SHOT_PROMPT = `Kamu menerima 1 atau lebih screenshot dari aplikasi Bybit (halaman Aset/Wallet dan/atau halaman Posisi Futures). Baca semua angka yang terlihat dan ekstrak ke dalam SATU objek JSON dengan skema persis berikut. Balas HANYA objek JSON, tanpa teks lain, tanpa markdown code fence:
+
+{
+  "totalAssetIDR": number atau null,
+  "availableIDR": number atau null,
+  "inUseIDR": number atau null,
+  "assetCurrency": "IDR" atau "USDT" atau null,
+  "coins": [ { "coin": string, "qty": number, "valueIDR": number, "valueCurrency": "IDR" atau "USDT", "changePct": number atau null } ],
+  "futures": [ { "symbol": string, "side": "long" atau "short", "leverage": number atau null, "qty": number atau null, "entry": number atau null, "mark": number atau null, "pnlUsdt": number atau null, "pnlPct": number atau null, "mm": number atau null, "liq": number atau null } ]
+}
+
+Aturan:
+- Semua angka harus number JSON polos, tanpa simbol "Rp"/"$", tanpa titik/koma ribuan, tanpa simbol %.
+- "assetCurrency"/"valueCurrency" isi "IDR" kalau nilai tampil dengan simbol Rp/IDR, isi "USDT" kalau tampil sebagai $ atau USDT.
+- Kalau suatu field tidak terlihat di screenshot manapun, isi null — jangan mengarang angka.
+- Gabungkan semua posisi futures dan semua coin holding dari seluruh screenshot yang diberikan ke dalam satu list masing-masing, jangan duplikat.
+- Tentukan "side" dari label/warna Long atau Short pada tiap posisi.`;
+
+function fileToImagePart(file){
+  return new Promise((resolve,reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const base64 = String(reader.result).split(',')[1];
+      resolve({ mimeType: file.type||'image/png', data: base64 });
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function callGeminiVision(apiKey, images){
+  const parts = [{text: SHOT_PROMPT}, ...images.map(img=>({inline_data:{mime_type:img.mimeType, data:img.data}}))];
+  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key='+encodeURIComponent(apiKey);
+  const res = await fetch(url, {
+    method:'POST',
+    headers:{'content-type':'application/json'},
+    body: JSON.stringify({ contents:[{ parts }], generationConfig:{ responseMimeType:'application/json' } })
+  });
+  if(!res.ok){
+    let msg = 'HTTP '+res.status;
+    try{ const j = await res.json(); msg = (j.error && j.error.message) || msg; }catch(e){}
+    throw new Error(msg);
+  }
+  const data = await res.json();
+  const cand = data.candidates && data.candidates[0];
+  const text = cand && cand.content && cand.content.parts ? cand.content.parts.map(p=>p.text||'').join('') : '';
+  if(!text) throw new Error('Respon AI kosong (kemungkinan gambar diblok filter keamanan)');
+  let parsed;
+  try{ parsed = JSON.parse(text); }catch(e){ throw new Error('Respon AI tidak berbentuk JSON valid'); }
+  return parsed;
+}
+
+function applyExtractedResult(r){
+  const rate = n(DATA.settings.usdtIdr);
+  let usedUsdtWithoutRate = false;
+  function conv(val, cur){
+    if(val==null || val==='') return '';
+    if(cur==='USDT'){
+      if(rate>0) return Math.round(n(val)*rate);
+      usedUsdtWithoutRate = true;
+      return n(val);
+    }
+    return n(val);
+  }
+  const st = updateState;
+  if(r.totalAssetIDR!=null) st.totalAssetIDR = conv(r.totalAssetIDR, r.assetCurrency);
+  if(r.availableIDR!=null) st.availableIDR = conv(r.availableIDR, r.assetCurrency);
+  if(r.inUseIDR!=null) st.inUseIDR = conv(r.inUseIDR, r.assetCurrency);
+  if(Array.isArray(r.coins) && r.coins.length){
+    st.coins = r.coins.map(c=>({
+      coin: c.coin||'', qty: n(c.qty), valueIDR: conv(c.valueIDR, c.valueCurrency), changePct: c.changePct!=null?n(c.changePct):''
+    }));
+  }
+  if(Array.isArray(r.futures) && r.futures.length){
+    st.futures = r.futures.map(f=>({
+      symbol:f.symbol||'', side: f.side==='short'?'short':'long', leverage: f.leverage!=null?n(f.leverage):'',
+      qty: f.qty!=null?n(f.qty):'', entry: f.entry!=null?n(f.entry):'', mark: f.mark!=null?n(f.mark):'',
+      pnlUsdt: f.pnlUsdt!=null?n(f.pnlUsdt):'', pnlPct: f.pnlPct!=null?n(f.pnlPct):'', mm: f.mm!=null?n(f.mm):'',
+      liq: f.liq!=null?n(f.liq):''
+    }));
+  }
+  if(!st.date) st.date = todayStr();
+  if(usedUsdtWithoutRate){
+    alert('Beberapa nilai terbaca dalam USDT tapi kurs USDT→IDR belum diset di Pengaturan. Nilai dipakai apa adanya (belum dikonversi) — set kurs lalu ulangi, atau edit manual di form.');
+  }
+}
+
+async function handleScreenshotUpload(ev){
+  const files = Array.from(ev.target.files||[]);
+  const statusEl = document.getElementById('shotStatus');
+  if(!files.length) return;
+  const apiKey = (DATA.settings.geminiApiKey||'').trim();
+  if(!apiKey){
+    if(statusEl) statusEl.innerHTML = '<span class="neg">Kunci API Gemini belum diisi. Buka Lainnya → Pengaturan Risiko untuk menambahkannya (gratis).</span>';
+    ev.target.value='';
+    return;
+  }
+  if(statusEl) statusEl.innerHTML = '<span class="muted">Membaca '+files.length+' screenshot...</span>';
+  try{
+    const images = await Promise.all(files.map(fileToImagePart));
+    const result = await callGeminiVision(apiKey, images);
+    applyExtractedResult(result);
+    if(statusEl) statusEl.innerHTML = '<span class="pos">Berhasil dibaca. Cek & lengkapi di tab Form sebelum simpan.</span>';
+    updateTab = 'form';
+    renderUpdateModal();
+  }catch(e){
+    console.error(e);
+    if(statusEl) statusEl.innerHTML = '<span class="neg">Gagal membaca: '+escapeHtml(e.message||String(e))+'</span>';
+  }
+  ev.target.value='';
 }
 
 function saveUpdate(){
